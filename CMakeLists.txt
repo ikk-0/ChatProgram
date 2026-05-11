@@ -1,15 +1,28 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.10)
+project(ChatServer)
 
-project(TcpServer)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 设置 C++ 标准
-set(CMAKE_CXX_STANDARD 11)
+# 指定MySQL路径
+set(MYSQL_INCLUDE_DIR "/usr/include/mysql")
+set(MYSQL_LIBRARY_DIR "/usr/lib64/mysql")
 
 # 头文件路径
-include_directories(include)
+include_directories(include ${MYSQL_INCLUDE_DIR})
+
+# 库文件路径
+link_directories(${MYSQL_LIBRARY_DIR})
 
 # 生成可执行程序
-add_executable(tcpserver_cmake main.cpp src/server.cpp)
+add_executable(chat_server
+    main.cpp
+    src/server.cpp
+    src/database.cpp
+)
 
-# 链接线程库
-target_link_libraries(tcpserver_cmake pthread)
+# 链接库
+target_link_libraries(chat_server 
+    pthread
+    mysqlclient
+)

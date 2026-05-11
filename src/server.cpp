@@ -1,6 +1,10 @@
 #include "server.h"
+#include "protocol.h"
+#include "database.h"
+#include <vector>
+using namespace std;
 
-TcpServer::TcpServer(const string &ip, int port)
+TcpServer::TcpServer(const std::string &ip, int port)
     : ip_(ip), port_(port), listen_fd(-1), epfd_(-1), is_running(false)
 {
     cout << "TcpServer created" << endl;
@@ -72,8 +76,123 @@ bool TcpServer::Init()
         return false;
     if (!BindInfo())
         return false;
-    cout << "server information : " << "[" << ip_ << ":" << port_ << "]" << endl;
+    // 初始化数据库
+    if (!InitDatabase())
+    {
+        cerr << "DataBase init failed" << endl;
+        return false;
+    }
+    cout << "server information : "
+         << "[" << ip_ << ":" << port_ << "]" << endl;
     return true;
+}
+
+bool TcpServer::InitDatabase()
+{
+    m_db = make_unique<DataBase>();
+    return m_db->Init("localhost", "root", "1234", "chat", 3306);
+}
+
+void TcpServer::SendResponse(int fd, uint8_t msgType, const char *data, int len)
+{
+    // 消息格式：[4字节包体长度][1字节消息类型][消息体]
+    int totalLen = 1 + len;
+    char *buffer = new char[4 + totalLen];
+    // 写入包体长度（网络字节序）
+    uint32_t netLen = htonl(totalLen);
+    memcpy(buffer, &netLen, 4);
+    // 写入消息类型
+    buffer[4] = msgType;
+    // 写入消息体
+    if (data && len > 0)
+    {
+        memcpy(buffer + 5, data, len);
+    }
+
+    send(fd, buffer, 4 + totalLen, 0);
+    delete[] buffer;
+}
+
+void TcpServer::HandleLogin(int fd, char *data, int len)
+{
+    if (len < sizeof(LoginRequest))
+    {
+        cerr << "Login request too short" << endl;
+        return;
+    }
+    LoginRequest *req = reinterpret_cast<LoginRequest *>(data);
+    LoginResponse resp;
+
+    // 检查用户是否在线
+    if (m_userfds.find(req->username) != m_userfds.end())
+    {
+        resp.result = 3;
+        strcpy(resp.message, "用户已经在其他地方登录");
+        SendResponse(fd, MSG_LOGIN_RESP, (char *)&resp, sizeof(resp));
+        return;
+    }
+
+    // 验证用户名密码
+    if (m_db->CheckLogin(req->username, req->password))
+    {
+        // 用户密码正确
+        resp.result = 0;
+        strcpy(resp.message, "登录成功");
+
+        // 记录用户在线状态
+        m_userfds[req->username] = fd;
+        m_clientUsers[fd] = req->username;
+        m_db->SetUserOnline(req->username, 1);
+
+        cout << "User logged in: " << req->username << " (fd=" << fd << ")" << endl;
+    }
+    else
+    {
+        // 错误
+        resp.result = 2;
+        strcpy(resp.message, "用户名或密码错误");
+    }
+    SendResponse(fd, MSG_LOGIN_RESP, (char *)&resp, sizeof(resp));
+}
+
+void TcpServer::HandleRegister(int fd, char *data, int len)
+{
+    if (len < sizeof(RegisterRequest))
+    {
+        cerr << "Register request too short" << endl;
+        return;
+    }
+    RegisterRequest *req = reinterpret_cast<RegisterRequest *>(data);
+    RegisterResponse resp;
+
+    if (m_db->RegisterUser(req->username, req->password, req->nickname))
+    {
+        resp.result = 0;
+        strcpy(resp.message, "注册成功");
+        cout << "New user registered: " << req->username << endl;
+    }
+    else
+    {
+        resp.result = 1;
+        strcpy(resp.message, "用户名已存在");
+    }
+
+    SendResponse(fd, MSG_REGISTER_RESP, (char *)&resp, sizeof(resp));
+}
+
+void TcpServer::HandleChat(int fd, char *data, int len)
+{
+    string sender = m_clientUsers[fd];
+    if (sender.empty())
+    {
+        cerr << "Unknown sender" << endl;
+        return;
+    }
+    // 简单回显（后续可以扩展为转发给其他用户）
+    cout << "Chat from " << sender << ": " << string(data, len) << endl;
+
+    // 回显消息给发送者
+    SendResponse(fd, MSG_CHAT, data, len);
 }
 
 bool TcpServer::StartListen()
@@ -88,34 +207,72 @@ bool TcpServer::StartListen()
     return true;
 }
 
-bool TcpServer::HandleClientInfo(int fd)
+void TcpServer::HandleClientInfo(int fd)
 {
-    // 处理集合中所有客户端的通讯，通过 for（i）区分
-    char rbuf[128] = "";
-    int res = recv(fd, rbuf, sizeof(rbuf), 0);
+    char buffer[4096];
+    int n = recv(fd, buffer, sizeof(buffer), 0);
+
     // 错误处理
-    if (res <= 0)
+    if (n <= 0)
     {
-        if (res == 0)
-            cerr << "对端已下线,客户端 [fd=" << fd << "] 正常断开" << endl;
+        if (n == 0)
+        {
+            cout << "Client disconnected (fd=" << fd << ")" << endl;
+        }
         else
-            cerr << "recv error [fd=" << fd << "]" << endl;
+        {
+            cerr << "recv error (fd=" << fd << ")" << endl;
+        }
         RemoveClient(fd);
-        return false;
+        return;
     }
-    rbuf[res] = '\0';
-    cout << "收到数据 : " << rbuf << endl;
-    // 处理数据
-    strcat(rbuf, "*_*");
-    // 回传给客户端
-    if (send(fd, rbuf, strlen(rbuf), 0) == -1)
+
+    if (n < 5)
     {
-        cerr << "send error [fd=" << fd << "]" << endl;
-        RemoveClient(fd);
-        return false;
+        cerr << "Message too short" << endl;
+        return;
     }
-    cout << "send success" << endl;
-    return true;
+
+    // 解析消息头
+    // 前4字节是包体长度（网络字节序）
+    // 第5字节是消息类型
+    // 读取 totalLen（包含类型字节的总长度）
+    uint32_t totalLen = ntohl(*(uint32_t *)buffer);
+    uint8_t msgType = buffer[4];
+
+    // 实际数据长度 = totalLen - 1（减去类型字节）
+    int dataLen = totalLen - 1;
+
+    // 检查是否完整接收（4字节头 + totalLen）
+    if (n < (int)(4 + totalLen))
+    {
+        cerr << "Incomplete message" << endl;
+        return;
+    }
+
+    char *msgData = buffer + 5;
+
+    switch (msgType)
+    {
+    case MSG_LOGIN_REQ:
+        if (dataLen >= sizeof(LoginRequest))
+        {
+            HandleLogin(fd, msgData, dataLen);
+        }
+        break;
+    case MSG_REGISTER_REQ:
+        if (dataLen >= sizeof(RegisterRequest))
+        {
+            HandleRegister(fd, msgData, dataLen);
+        }
+        break;
+    case MSG_CHAT:
+        HandleChat(fd, msgData, dataLen);
+        break;
+    default:
+        cerr << "Unknown message type: " << (int)msgType << endl;
+        break;
+    }
 }
 
 bool TcpServer::HandleNewConnection()
@@ -135,6 +292,10 @@ bool TcpServer::HandleNewConnection()
     cout << "新客户端连接: " << ip << ":" << ntohs(cin.sin_port)
          << " [fd=" << newfd << "]" << endl;
 
+    // 设置客户端 socket 为非阻塞模式
+    int flags = fcntl(newfd, F_GETFL, 0);
+    fcntl(newfd, F_SETFL, flags | O_NONBLOCK);
+
     // 将客户端文件描述符添加到集合中
     epoll_event ev;
     ev.data.fd = newfd;
@@ -145,6 +306,18 @@ bool TcpServer::HandleNewConnection()
 
 void TcpServer::RemoveClient(int fd)
 {
+    auto it = m_clientUsers.find(fd);
+    if (it != m_clientUsers.end())
+    {
+        string username = it->second;
+        m_clientUsers.erase(fd);
+        m_userfds.erase(username);
+        if (m_db)
+        {
+            m_db->SetUserOnline(username, 0);
+        }
+        cout << "User offline: " << username << endl;
+    }
     epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, NULL);
     close(fd);
     cout << "移除客户端 [fd=" << fd << "]" << endl;
@@ -153,7 +326,33 @@ void TcpServer::RemoveClient(int fd)
 void TcpServer::Stop()
 {
     is_running = false;
-    cout << "Server stopping..." << endl;
+
+    // 清理所有已连接的客户端
+    vector<int> fds_to_remove;
+    for (auto &pair : m_clientUsers)
+    {
+        fds_to_remove.push_back(pair.first);
+    }
+
+    for (int fd : fds_to_remove)
+    {
+        RemoveClient(fd);
+    }
+
+    // 关闭监听 socket 和 epoll
+    if (listen_fd != -1)
+    {
+        close(listen_fd);
+        listen_fd = -1;
+    }
+
+    if (epfd_ != -1)
+    {
+        close(epfd_);
+        epfd_ = -1;
+    }
+
+    cout << "Server stopped, all resources cleaned" << endl;
 }
 
 bool TcpServer::Run()
@@ -188,7 +387,6 @@ bool TcpServer::Run()
             cerr << "epoll_wait error: " << strerror(errno) << endl;
             break;
         }
-        cout << "本次触发的事件个数 num = " << num << endl;
 
         for (int i = 0; i < num; i++)
         {
