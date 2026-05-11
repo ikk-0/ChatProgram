@@ -25,6 +25,8 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         ${PROJECT_SOURCES}
         networker.h networker.cpp
         client.h client.cpp
+        loginwidget.h loginwidget.cpp loginwidget.ui
+        protocol.h
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET TcpClient APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR

@@ -2,17 +2,19 @@
 #include <iostream>
 using namespace std;
 
-
-#define SER_IP "192.168.233.129"
-#define SER_PORT 8888
-
 Client::Client()
-    :ip_(SER_IP),port_(SER_PORT),connect_fd(INVALID_SOCKET)
+    : winsock_started(false),port_(8888),connect_fd(INVALID_SOCKET)
 {}
 
 Client::~Client()
 {
     DisConnect();
+}
+
+void Client::SetServerInfo(const std::string& ip, int port)
+{
+    ip_ = ip;
+    port_ = port;
 }
 
 bool Client::Init()
@@ -23,6 +25,8 @@ bool Client::Init()
         cerr << "WSAStartup error" << endl;
         return false;
     }
+
+    winsock_started = true;
 
     //创建套接字
     connect_fd = socket(AF_INET,SOCK_STREAM,0);
@@ -103,7 +107,10 @@ void Client::DisConnect()
         closesocket(connect_fd);
         connect_fd = INVALID_SOCKET;
     }
-    WSACleanup();
+    if (winsock_started) {
+        WSACleanup();
+        winsock_started = false;
+    }
 }
 
 bool Client::IsConnected() const
@@ -126,7 +133,7 @@ int Client::Recv(char* buffer, int buffer_size)
     }
     return recv(connect_fd,buffer,buffer_size,0);
 }
-SOCKET Client::GetSocket()
+SOCKET Client::GetSocket() const
 {
     return connect_fd;
 }

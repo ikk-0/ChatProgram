@@ -12,6 +12,7 @@ public:
     Client();
     ~Client();
 
+    void SetServerInfo(const std::string& ip, int port);
     bool Init();
     bool Connect();
     void DisConnect();
@@ -20,12 +21,13 @@ public:
     int Send(const char* data,int len);
     int Recv(char* buffer, int buffer_size);
 
-    SOCKET GetSocket();
+    SOCKET GetSocket() const;
 
 private:
     std::string ip_;
     int port_;
     SOCKET connect_fd;
+    bool winsock_started;
 };
 
 #endif // CLIENT_H

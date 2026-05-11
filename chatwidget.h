@@ -15,18 +15,20 @@ class ChatWidget : public QWidget
     Q_OBJECT
 
 public:
-    explicit ChatWidget(QWidget *parent = nullptr);
+    explicit ChatWidget(const QString& username, NetWorker* netWorker, QWidget *parent = nullptr);
     ~ChatWidget() override;
 
 private slots:
-    void on_send_btn_clicked();
-    void onConnected();
+    void onSendClicked();
+    void onMessageReceived(const QString& msg);
     void onDisconnected();
-    void onMessageReceived(const QString &msg);
-    void onError(const QString &error);
+    void onError(const QString& error);
 
 private:
-    Ui::ChatWidget *ui;
-    NetWorker* networker;
+    void appendMessage(const QString& sender, const QString& msg);
+
+    std::unique_ptr<Ui::ChatWidget> ui;
+    NetWorker* m_networker;
+    QString m_username;
 };
 #endif // CHATWIDGET_H

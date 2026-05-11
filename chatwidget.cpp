@@ -1,70 +1,76 @@
 #include "chatwidget.h"
 #include "./ui_ChatWidget.h"
+#include "networker.h"
+#include <QDateTime>
 
-ChatWidget::ChatWidget(QWidget *parent)
+ChatWidget::ChatWidget(const QString& username, NetWorker* networker, QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::ChatWidget)
+    , m_networker(networker)
+    , m_username(username)
 {
     ui->setupUi(this);
-    setWindowTitle("聊天客户端");
-
-    networker = new NetWorker;
+    setWindowTitle("聊天客户端 - " + username);
 
     //连接信号与槽
-    connect(networker,&NetWorker::connected,this,&ChatWidget::onConnected);
     connect(networker,&NetWorker::disconnected,this,&ChatWidget::onDisconnected);
     connect(networker,&NetWorker::messageReceived,this,&ChatWidget::onMessageReceived);
     connect(networker,&NetWorker::errorOccurred,this,&ChatWidget::onError);
 
     //连接发送按钮
-    connect(ui->send_btn,&QPushButton::clicked,this,&ChatWidget::on_send_btn_clicked);
+    connect(ui->send_btn,&QPushButton::clicked,
+            this, &ChatWidget::onSendClicked);
+    //回车发送消息
+    connect(ui->input_lineE, &QLineEdit::returnPressed,
+            this, &ChatWidget::onSendClicked);
 
-    networker->Start();
     ui->input_lineE->setFocus();
 }
 
-ChatWidget::~ChatWidget()
+ChatWidget::~ChatWidget() = default;
+
+
+void ChatWidget::onSendClicked()
 {
-    networker->Stop();
-    delete ui;
-}
+    QString msg = ui->input_lineE->text().trimmed();
+    if (msg.isEmpty()) return;
 
-
-void ChatWidget::on_send_btn_clicked()
-{
-    QString qmessage = ui->input_lineE->text();
-    if(qmessage.trimmed().isEmpty())
-    {
-        return;
-    }
-
-    // 将消息显示在界面上
-    ui->display_textE->append("我：" + qmessage);
+    // 显示在界面上
+    appendMessage(m_username, msg);
 
     // 将消息发送给服务器（QString 转 std::string）
-    std::string message = qmessage.toStdString();
-    networker->SendMessageW(message);
+    QByteArray utf8Data = msg.toUtf8();
+    m_networker->SendChat(std::string(utf8Data.data(), utf8Data.size()));
 
     ui->input_lineE->clear();
     ui->input_lineE->setFocus();
 }
 
-void ChatWidget::onConnected()
+void ChatWidget::onMessageReceived(const QString& msg)
 {
-    ui->display_textE->append("系统：已连接到服务器");
+    // 服务器发来的消息格式：可以解析发送者
+    QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
+    ui->display_textE->append(QString("[%1] %2").arg(timestamp).arg(msg));
 }
 
 void ChatWidget::onDisconnected()
 {
-    ui->display_textE->append("系统：与服务器断开连接");
+    appendMessage("系统", "与服务器断开连接");
+    ui->send_btn->setEnabled(false);
+    ui->input_lineE->setEnabled(false);
 }
 
-void ChatWidget::onMessageReceived(const QString &msg)
+void ChatWidget::onError(const QString& error)
 {
-    ui->display_textE->append("服务器：" + msg);
+    appendMessage("错误", error);
 }
 
-void ChatWidget::onError(const QString &error)
+void ChatWidget::appendMessage(const QString& sender, const QString& msg)
 {
-    ui->display_textE->append("错误：" + error);
+    QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
+    if (sender == m_username) {
+        ui->display_textE->append(QString("[%1] 我：%2").arg(timestamp).arg(msg));
+    } else {
+        ui->display_textE->append(QString("[%1] %2：%3").arg(timestamp).arg(sender).arg(msg));
+    }
 }
