@@ -42,6 +42,81 @@ void NetWorker::Stop()
     m_isRunning = false;
 }
 
+//消息解析函数
+void NetWorker::ParseMessage(const char* buffer, int len)
+{
+    if(len<5) return;
+    uint32_t totalLen=ntohl(*(uint32_t*)buffer);
+    uint8_t msgType=buffer[4];
+
+    if(len<(int)(4+totalLen)) return;
+
+    const char* msgData = buffer+5;
+    int dataLen = totalLen-1;
+
+    switch (msgType)
+    {
+    case MSG_LOGIN_RESP:{
+        if (dataLen >= (int)sizeof(LoginResponse)) {
+            LoginResponse* resp = (LoginResponse*)msgData;
+            emit loginResponse(resp->result, QString::fromUtf8(resp->message));
+        }
+        break;
+    }
+    case MSG_REGISTER_RESP:{
+        if (dataLen >= sizeof(RegisterResponse)) {
+            RegisterResponse* resp = (RegisterResponse*)msgData;
+            emit registerResponse(resp->result, QString::fromUtf8(resp->message));
+        }
+        break;
+    }
+    case MSG_CHAT:{
+        QString msg = QString::fromUtf8(msgData, dataLen);
+        emit messageReceived(msg);
+        break;
+    }
+    case MSG_USER_LIST:{
+        int userCount = dataLen/sizeof(UserInfo);
+        QList<QString> userList;
+        UserInfo* users = (UserInfo*)msgData;
+        for(int i =0;i<userCount;i++)
+        {
+            userList.append(QString::fromUtf8(users[i].username));
+        }
+        emit userListReceived(userList);
+        break;
+    }
+    case MSG_ONLINE_NOTIFY:{
+        if(dataLen>=(int)sizeof(UserInfo))
+        {
+            UserInfo* info = (UserInfo*)msgData;
+            emit userOnline(QString::fromUtf8(info->username));
+        }
+        break;
+    }
+    case MSG_OFFLINE_NOTIFY:{
+        if(dataLen>=(int)sizeof(UserInfo))
+        {
+            UserInfo* info = (UserInfo*)msgData;
+            emit userOffline(QString::fromUtf8(info->username));
+        }
+        break;
+    }
+    case MSG_PRIVATE_CHAT:{
+        if(dataLen>=(int)sizeof(PrivateChat))
+        {
+            PrivateChat* chat = (PrivateChat*)msgData;
+            QString fromUser = QString::fromUtf8(chat->from_user);
+            QString content = QString::fromUtf8(chat->content);
+            emit privateMessageReceived(fromUser,content);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 void NetWorker::Run()
 {
     //初始化并连接
@@ -73,41 +148,7 @@ void NetWorker::Run()
             int res = m_client->Recv(buffer,sizeof(buffer));
             if(res>0)
             {
-                buffer[res] = '\0';
-
-                // 解析消息
-                if(res<5) continue;
-                uint32_t totalLen = ntohl(*(uint32_t*)buffer);
-                uint8_t msgType = buffer[4];
-                if(res < (int)(4 + totalLen)) continue;
-
-                char* msgData = buffer + 5;
-                int dataLen = totalLen - 1;
-
-                switch(msgType)
-                {
-                case MSG_LOGIN_RESP:{
-                    if (dataLen >= sizeof(LoginResponse)) {
-                        LoginResponse* resp = reinterpret_cast<LoginResponse*>(msgData);
-                        emit loginResponse(resp->result, QString::fromUtf8(resp->message));
-                    }
-                    break;
-                }
-                case MSG_REGISTER_RESP:{
-                    if (dataLen >= sizeof(RegisterResponse)) {
-                        RegisterResponse* resp = reinterpret_cast<RegisterResponse*>(msgData);
-                        emit registerResponse(resp->result, QString::fromUtf8(resp->message));
-                    }
-                    break;
-                }
-                case MSG_CHAT:{
-                    QString msg = QString::fromUtf8(msgData, dataLen);
-                    emit messageReceived(msg);
-                    break;
-                }
-                default:
-                    break;
-                }
+                ParseMessage(buffer,res);
             }
             else if(res == 0)  // 对端关闭连接
             {
@@ -181,4 +222,13 @@ void NetWorker::SendRegister(const std::string& username, const std::string& pas
 void NetWorker::SendChat(const std::string& msg)
 {
     SendMessage_(MSG_CHAT,msg.c_str(),msg.size());
+}
+
+void NetWorker::SendPrivateChat(const std::string& toUser, const std::string& content)
+{
+    PrivateChat chat;
+    memset(&chat, 0, sizeof(chat));  // 清零，避免垃圾数据
+    strncpy(chat.content,content.c_str(),1023);
+    strncpy(chat.to_user,toUser.c_str(),31);
+    SendMessage_(MSG_PRIVATE_CHAT,reinterpret_cast<char*>(&chat), sizeof(PrivateChat));
 }

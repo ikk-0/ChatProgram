@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>494</width>
-    <height>382</height>
+    <width>681</width>
+    <height>477</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -15,17 +15,31 @@
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
-    <widget class="QTextEdit" name="display_textE">
-     <property name="readOnly">
-      <bool>true</bool>
-     </property>
-     <property name="placeholderText">
-      <string/>
-     </property>
-    </widget>
+    <layout class="QHBoxLayout" name="horizontalLayout_main">
+     <item>
+      <widget class="QListWidget" name="userList">
+       <property name="maximumSize">
+        <size>
+         <width>150</width>
+         <height>16777215</height>
+        </size>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QTextEdit" name="display_textE">
+       <property name="readOnly">
+        <bool>true</bool>
+       </property>
+       <property name="placeholderText">
+        <string/>
+       </property>
+      </widget>
+     </item>
+    </layout>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="horizontalLayout">
+    <layout class="QHBoxLayout" name="horizontalLayout_input">
      <item>
       <widget class="QLineEdit" name="input_lineE">
        <property name="placeholderText">
@@ -36,7 +50,7 @@
      <item>
       <widget class="QPushButton" name="send_btn">
        <property name="text">
-        <string>Send</string>
+        <string>发送</string>
        </property>
       </widget>
      </item>
