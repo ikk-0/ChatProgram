@@ -15,6 +15,9 @@
 #include <signal.h>
 #include <map>
 #include <memory>
+#include <vector>
+
+#include "protocol.h"
 
 //// 前向声明，避免在头文件中包含过多依赖
 class DataBase;

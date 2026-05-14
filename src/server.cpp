@@ -1,7 +1,6 @@
 #include "server.h"
-#include "protocol.h"
 #include "database.h"
-#include <vector>
+#include <algorithm>
 using namespace std;
 
 TcpServer::TcpServer(const std::string &ip, int port)
@@ -145,14 +144,23 @@ void TcpServer::HandleLogin(int fd, char *data, int len)
         m_db->SetUserOnline(req->username, 1);
 
         cout << "User logged in: " << req->username << " (fd=" << fd << ")" << endl;
+
+        // 发送登录响应
+        SendResponse(fd, MSG_LOGIN_RESP, (char *)&resp, sizeof(resp));
+        
+        // 发送当前用户列表给新登录的用户
+        SendUserList(fd);
+        
+        // 通知其他用户有新用户上线
+        NotifyUserOnline(req->username);
     }
     else
     {
         // 错误
         resp.result = 2;
         strcpy(resp.message, "用户名或密码错误");
+        SendResponse(fd, MSG_LOGIN_RESP, (char *)&resp, sizeof(resp));
     }
-    SendResponse(fd, MSG_LOGIN_RESP, (char *)&resp, sizeof(resp));
 }
 
 void TcpServer::HandleRegister(int fd, char *data, int len)
@@ -269,6 +277,9 @@ void TcpServer::HandleClientInfo(int fd)
     case MSG_CHAT:
         HandleChat(fd, msgData, dataLen);
         break;
+    case MSG_PRIVATE_CHAT:
+        HandlePrivateChat(fd, msgData, dataLen);
+        break;
     default:
         cerr << "Unknown message type: " << (int)msgType << endl;
         break;
@@ -310,6 +321,8 @@ void TcpServer::RemoveClient(int fd)
     if (it != m_clientUsers.end())
     {
         string username = it->second;
+        // 先通知其他用户该用户下线
+        NotifyUserOffline(username);
         m_clientUsers.erase(fd);
         m_userfds.erase(username);
         if (m_db)
@@ -405,4 +418,117 @@ bool TcpServer::Run()
     }
     close(epfd_);
     return true;
+}
+
+void TcpServer::BuildUserList(std::vector<UserInfo> &userList)
+{
+    userList.clear();
+    for (auto &pair : m_userfds)
+    {
+        UserInfo info;
+        strncpy(info.username, pair.first.c_str(), 31);
+        strncpy(info.nickname, pair.first.c_str(), 31);
+        info.status = 1;
+        userList.push_back(info);
+    }
+}
+
+void TcpServer::SendUserList(int fd)
+{
+    std::vector<UserInfo> userList;
+    BuildUserList(userList);
+
+    // 计算发送用户表响应需要发送的数据大小
+    int dataLen = userList.size() * sizeof(UserInfo);
+    char *data = new char[dataLen];
+
+    for (size_t i = 0; i < userList.size(); i++)
+    {
+        memcpy(data + i * sizeof(UserInfo), &userList[i], sizeof(UserInfo));
+    }
+    SendResponse(fd, MSG_USER_LIST, data, dataLen);
+    delete[] data;
+
+    cout << "Sent user list to fd=" << fd << ", user count=" << userList.size() << endl;
+}
+
+void TcpServer::BroadcastUserList()
+{
+    std::vector<UserInfo> userList;
+    BuildUserList(userList);
+
+    int dataLen = userList.size() * sizeof(UserInfo);
+    char *data = new char[dataLen];
+
+    for (size_t i = 0; i < userList.size(); i++)
+    {
+        memcpy(data + i * sizeof(UserInfo), &userList[i], sizeof(UserInfo));
+    }
+    for (auto &pair : m_clientUsers)
+    {
+        SendResponse(pair.first, MSG_USER_LIST, data, dataLen);
+    }
+
+    delete[] data;
+    cout << "Broadcast user list to all clients, user count=" << userList.size() << endl;
+}
+
+// 通知所有用户某人上线
+void TcpServer::NotifyUserOnline(const std::string &username)
+{
+    UserInfo info;
+    strncpy(info.username, username.c_str(), 31);
+    strncpy(info.nickname, username.c_str(), 31);
+    info.status = 1;
+
+    for (auto &pair : m_clientUsers)
+    {
+        if (pair.second != username)
+        {
+            SendResponse(pair.first, MSG_ONLINE_NOTIFY, (char *)&info, sizeof(UserInfo));
+        }
+    }
+    cout << "Notified: user " << username << " online" << endl;
+}
+
+// 通知所有用户某人下线
+void TcpServer::NotifyUserOffline(const std::string &username)
+{
+    UserInfo info;
+    strncpy(info.username, username.c_str(), 31);
+    strncpy(info.nickname, username.c_str(), 31);
+    info.status = 0;
+
+    for (auto &pair : m_clientUsers)
+    {
+        SendResponse(pair.first, MSG_OFFLINE_NOTIFY, (char *)&info, sizeof(UserInfo));
+    }
+    cout << "Notified: user " << username << " offline" << endl;
+}
+
+// 处理私聊消息
+void TcpServer::HandlePrivateChat(int fd, char *data, int len)
+{
+    if (len < (int)sizeof(PrivateChat))
+    {
+        cerr << "Private chat message too short" << endl;
+        return;
+    }
+
+    PrivateChat* chat = reinterpret_cast<PrivateChat*>(data);
+    string sender = m_clientUsers[fd];
+    string target = chat->to_user; 
+
+    cout << "Private chat from " << sender << " to " << target << ": " << chat->content << endl;
+
+    auto it = m_userfds.find(target);
+    if(it != m_userfds.end())
+    {// 目标用户在线，转发消息
+        // 修改发送者为实际用户名
+        strncpy(chat->from_user,sender.c_str(),31);
+        SendResponse(it->second,MSG_PRIVATE_CHAT,(char*)chat,sizeof(PrivateChat));
+    }else
+    {
+        cout << "Target user " << target << " is offline" << endl;
+    }
 }
