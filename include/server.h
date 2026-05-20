@@ -16,11 +16,12 @@
 #include <map>
 #include <memory>
 #include <vector>
-
+#include <mutex>
 #include "protocol.h"
 
 //// 前向声明，避免在头文件中包含过多依赖
 class DataBase;
+class ThreadPool;
 
 class TcpServer
 {
@@ -32,6 +33,10 @@ private:
     bool is_running;
 
     std::unique_ptr<DataBase> m_db;       // 数据库对象
+    std::unique_ptr<ThreadPool> m_threadPool;   // 线程池
+    
+    // 在线用户表（多线程需要加锁保护）
+    std::mutex m_userMutex;                     // 保护在线用户表的锁
     std::map<int,std::string> m_clientUsers;   // 快速查找 fd -> 用户名
     std::map<std::string,int> m_userfds;       // 快速查找 用户名 -> fd
 
@@ -53,9 +58,9 @@ private:
     bool HandleNewConnection();
     void RemoveClient(int fd);
 
-    void HandleLogin(int fd, char *data, int len);
-    void HandleRegister(int fd, char *data, int len);
-    void HandleChat(int fd, char *data, int len);
+    void HandleLogin(int fd, const char *data, int len);
+    void HandleRegister(int fd, const char *data, int len);
+    void HandleChat(int fd, const char *data, int len);
 
     void SendResponse(int fd, uint8_t msgType, const char *data, int len);
 
@@ -63,8 +68,14 @@ private:
     void SendUserList(int fd);                          // 发送用户列表给指定客户端
     void NotifyUserOnline(const std::string& username); // 通知所有用户某人上线
     void NotifyUserOffline(const std::string& username);// 通知所有用户某人下线
-    void HandlePrivateChat(int fd, char* data, int len);// 处理私聊消息
+    void HandlePrivateChat(int fd, const char* data, int len);// 处理私聊消息
     void BuildUserList(std::vector<UserInfo>& userList); // 构建用户列表
+
+    // 线程安全的用户表操作
+    void AddUser(int fd, const std::string& username);
+    void RemoveUser(int fd);
+    bool IsUserOnline(const std::string& username);
+    int GetUserFd(const std::string& username);
 };
 
 #endif

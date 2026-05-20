@@ -19,6 +19,7 @@ add_executable(chat_server
     main.cpp
     src/server.cpp
     src/database.cpp
+    src/threadpool.cpp
 )
 
 # 链接库
