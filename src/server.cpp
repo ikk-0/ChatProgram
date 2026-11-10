@@ -56,7 +56,7 @@ bool TcpServer::BindInfo()
 
     // 创建地址信息结构体
     struct sockaddr_in sin;
-    memset(&sin, 0, sizeof(sin));
+    memset(&sin, 0, sizeof(sin));//memset作用： sin 的所有成员（sin_family、sin_port、sin_addr、sin_zero 等）都变成 0，保证结构体干净、没有垃圾数据。
     sin.sin_addr.s_addr = inet_addr(ip_.c_str()); // c_str() 获取 C 风格字符串
     sin.sin_family = AF_INET;
     sin.sin_port = htons(port_);
@@ -526,7 +526,7 @@ void TcpServer::RemoveClient(int fd)
         {
             username = it->second;
             m_clientUsers.erase(fd);
-            
+            m_userfds.erase(username);
             if (m_db)
             {
                 m_db->SetUserOnline(username, 0);
